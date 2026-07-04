@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vérification de photo certifiée — MedPhoto</title>
+<style>
+  :root {
+    --accent: #2e70e6;
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #1a1f2e;
+    --gray: #8c94a6;
+    --green: #1fa055;
+    --red: #d64545;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 24px 16px 48px;
+  }
+  .container { width: 100%; max-width: 480px; }
+  header { text-align: center; margin-bottom: 24px; }
+  header .logo { font-size: 15px; font-weight: 700; color: var(--accent); letter-spacing: .3px; }
+  header h1 { font-size: 21px; font-weight: 700; margin-top: 6px; }
+  .card {
+    background: var(--card); border-radius: 16px; padding: 20px;
+    box-shadow: 0 1px 4px rgba(20,30,60,.06); margin-bottom: 16px;
+  }
+  .badge {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px; border-radius: 12px; font-weight: 600; font-size: 15px;
+  }
+  .badge.ok  { background: #e8f7ee; color: var(--green); }
+  .badge.err { background: #fdeaea; color: var(--red); }
+  .badge svg { flex-shrink: 0; }
+  .photo { width: 100%; border-radius: 12px; display: block; margin-top: 16px; }
+  .meta { margin-top: 16px; }
+  .meta .row { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid #eef0f4; }
+  .meta .row:last-child { border-bottom: none; }
+  .meta .label { font-size: 11px; font-weight: 700; color: var(--gray); text-transform: uppercase; letter-spacing: .4px; width: 110px; flex-shrink: 0; padding-top: 2px; }
+  .meta .value { font-size: 14px; word-break: break-all; }
+  .explain { font-size: 13px; color: var(--gray); line-height: 1.55; }
+  .explain strong { color: var(--text); }
+  .loading { text-align: center; color: var(--gray); padding: 40px 0; font-size: 14px; }
+  footer { margin-top: 28px; font-size: 11px; color: var(--gray); text-align: center; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo">MedPhoto · Vérification</div>
+    <h1>Photo certifiée</h1>
+  </header>
+
+  <div id="content" class="card">
+    <div class="loading">Vérification en cours…</div>
+  </div>
+
+  <div class="card explain">
+    <strong>Comment lire cette page ?</strong><br>
+    La photo affichée ci-dessus est <strong>l'original certifié</strong>, scellé au moment
+    de la capture, avant toute retouche possible. Comparez-la visuellement à la photo
+    publiée (Instagram, site web…). Si la photo publiée montre un résultat sensiblement
+    différent de l'original certifié, elle a été modifiée.
+    <br><br>
+    <strong>Ce que la certification garantit :</strong> cette image précise n'a pas été
+    modifiée depuis sa capture, à la date indiquée, par le praticien indiqué.<br>
+    <strong>Ce qu'elle ne garantit pas :</strong> les autres photos de la même publication,
+    qui ne portent pas de certificat.
+  </div>
+
+  <footer>
+    Certification MedPhoto — prototype.<br>
+    L'empreinte SHA-256 identifie l'image de manière unique et infalsifiable.
+  </footer>
+</div>
+
+<script>
+// ── Configuration Supabase (⚠️ à remplir, mêmes valeurs que l'app) ──────────
+const SUPABASE_URL = "https://jczevcwzeimohgqdvcjl.supabase.co";
+const SUPABASE_KEY = "sb_publishable_e5qV4brClsBBqyUw6Ps08Q_r5ryG3oR";
+const BUCKET = "certified";
+const TABLE  = "certifications";
+
+const content = document.getElementById("content");
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s ?? "";
+  return d.innerHTML;
+}
+
+function showError(msg) {
+  content.innerHTML = `
+    <div class="badge err">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M15 9l-6 6M9 9l6 6"/></svg>
+      ${esc(msg)}
+    </div>`;
+}
+
+async function verify() {
+  const params = new URLSearchParams(location.search);
+  const code = (params.get("c") || "").toUpperCase();
+  const id   = params.get("id") || "";
+
+  let filter;
+  if (/^[2-9A-HJKMNP-Z]{6}$/.test(code)) {
+    filter = `short_code=eq.${code}`;
+  } else if (/^[0-9a-f-]{36}$/.test(id)) {
+    filter = `id=eq.${id}`;
+  } else {
+    showError("Aucun certificat valide dans ce lien. Vérifiez le code saisi.");
+    return;
+  }
+  try {
+    const r = await fetch(
+      `${SUPABASE_URL}/rest/v1/${TABLE}?${filter}&select=*`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!r.ok) throw new Error("Serveur de vérification injoignable.");
+    const rows = await r.json();
+    if (!rows.length) {
+      showError("Certificat introuvable. Ce QR code ne correspond à aucune photo certifiée.");
+      return;
+    }
+    const c = rows[0];
+    const imgURL = `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${c.image_path}`;
+    const date = new Date(c.captured_at).toLocaleString("fr-FR", {
+      dateStyle: "long", timeStyle: "short"
+    });
+    const levelLabel = c.level === "capture"
+      ? "Certifiée à la capture (niveau fort)"
+      : "Certifiée à l'import";
+
+    content.innerHTML = `
+      <div class="badge ok">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 2.4 3.4-.5 1 3.3 3 1.7-1.3 3.1 1.3 3.1-3 1.7-1 3.3-3.4-.5L12 22l-2.4-2.4-3.4.5-1-3.3-3-1.7 1.3-3.1L2.2 8.9l3-1.7 1-3.3 3.4.5z"/><path d="M9 12l2 2 4-4"/></svg>
+        Certificat authentique
+      </div>
+      <img class="photo" src="${imgURL}" alt="Photo certifiée originale">
+      <div class="meta">
+        <div class="row"><div class="label">Code</div><div class="value" style="font-family:monospace;font-weight:700;letter-spacing:2px">${esc(c.short_code || "—")}</div></div>
+        <div class="row"><div class="label">Praticien</div><div class="value">${esc(c.practitioner)}</div></div>
+        <div class="row"><div class="label">Capturée le</div><div class="value">${esc(date)}</div></div>
+        <div class="row"><div class="label">Niveau</div><div class="value">${esc(levelLabel)}</div></div>
+        <div class="row"><div class="label">Empreinte</div><div class="value" style="font-family:monospace;font-size:12px">${esc(c.sha256)}</div></div>
+        <div class="row"><div class="label">Certificat</div><div class="value" style="font-family:monospace;font-size:12px">${esc(c.id)}</div></div>
+      </div>`;
+  } catch (e) {
+    showError(e.message || "Erreur de vérification.");
+  }
+}
+
+verify();
+</script>
+</body>
+</html>
